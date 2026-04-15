@@ -17,7 +17,10 @@ pg = st.navigation(
         "Analytics": [
             st.Page("views/chat.py",   title="Chat",            icon="💬", default=True),
             st.Page("views/schema.py", title="Schema Explorer", icon="🗂️"),
-        ]
+        ],
+        "Help": [
+            st.Page("views/api_guide.py", title="API Key Guide", icon="🔑"),
+        ],
     }
 )
 
