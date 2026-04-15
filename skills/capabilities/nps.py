@@ -51,8 +51,7 @@ ROUND(
  - SUM(CASE WHEN {b['score_col']} <= {b['detractor_max']} THEN 1.0 ELSE 0 END))
   * 100.0 / COUNT(*), 1) AS nps
 
-=== EXAMPLE ===
--- Full NPS waterfall per entity
+=== EXAMPLE 1: Full NPS waterfall per entity ===
 SELECT {b['entity_col']},
   COUNT(*) total,
   SUM(CASE WHEN {b['score_col']} >= {b['promoter_min']} THEN 1 ELSE 0 END) promoters,
@@ -63,6 +62,19 @@ SELECT {b['entity_col']},
    - SUM(CASE WHEN {b['score_col']} <= {b['detractor_max']} THEN 1.0 ELSE 0 END))
     * 100.0 / COUNT(*), 1) AS nps
 FROM {b['view']}
+GROUP BY {b['entity_col']}
+HAVING COUNT(*) >= {b['min_raters']}
+ORDER BY nps DESC;
+
+=== EXAMPLE 2: Compare two brands ===
+-- When comparing specific brands, filter by name in WHERE clause
+SELECT {b['entity_col']}, COUNT(*) total,
+  ROUND(
+    (SUM(CASE WHEN {b['score_col']} >= {b['promoter_min']} THEN 1.0 ELSE 0 END)
+   - SUM(CASE WHEN {b['score_col']} <= {b['detractor_max']} THEN 1.0 ELSE 0 END))
+    * 100.0 / COUNT(*), 1) AS nps
+FROM {b['view']}
+WHERE {b['entity_col']} IN ('BrandA', 'BrandB')
 GROUP BY {b['entity_col']}
 HAVING COUNT(*) >= {b['min_raters']}
 ORDER BY nps DESC;

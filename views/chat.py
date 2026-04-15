@@ -46,7 +46,7 @@ DB_PATH = get_db_path()
 if not DB_PATH or not DB_PATH.exists():
     print("WARNING: Could not initialize database")
 
-groq_client   = Groq(api_key=os.environ["GROQ_API_KEY"])
+groq_client   = Groq(api_key=os.environ.get("GROQ_API_KEY", "missing_key"))
 SQL_MODEL     = "llama-3.1-8b-instant"        # Fast, cheap — good enough for SQL gen
 SUMMARY_MODEL = "llama-3.1-8b-instant"        # Fast, cheap — summary with pre-computed context
 THINKER_MODEL = "qwen/qwen3-32b"              # Reasoning model for complex query planning
@@ -448,6 +448,19 @@ with st.sidebar:
         st.session_state.messages   = []
         st.session_state.last_skill = None
         st.rerun()
+
+with st.sidebar:
+    st.divider()
+    st.markdown("#### 🔑 API Keys")
+    if "groq_key" not in st.session_state:
+        st.session_state.groq_key = os.environ.get("GROQ_API_KEY", "")
+    
+    groq_key = st.text_input("Groq API Key", type="password", value=st.session_state.groq_key, placeholder="Enter your Groq key")
+    
+    if groq_key:
+        st.session_state.groq_key = groq_key
+        os.environ["GROQ_API_KEY"] = groq_key
+        groq_client = Groq(api_key=groq_key)
 
 if "messages"   not in st.session_state:
     st.session_state.messages   = []

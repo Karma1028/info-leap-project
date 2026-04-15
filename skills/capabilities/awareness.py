@@ -55,6 +55,11 @@ def format_prompt(binding: dict, shared_cols: str, respondent_table: str) -> str
 
 IMPORTANT: Output ONLY a single SQL query. Do NOT provide multiple queries or explanations.
 
+=== CRITICAL RULE ===
+NEVER use subqueries in SELECT that contain ORDER BY + aggregate functions.
+Use GROUP BY with HAVING instead of correlated subqueries.
+For ranking: use a CTE or subquery with proper GROUP BY, not inline ORDER BY.
+
 === STAGE LOGIC ===
 - {b['tom_value']}   = {b['tom_desc']}
 - {b['spont_value']}  = {b['spont_desc']}
@@ -113,4 +118,11 @@ SELECT city_name, COUNT(DISTINCT respondent_id) aware,
 FROM {b['view']}
 WHERE brand_name = 'Crompton' AND {b['stage_col']} IN ('{b['tom_value']}', '{b['spont_value']}') AND {b['exclude_filter']}
 GROUP BY city_name ORDER BY aware DESC LIMIT 10;
+
+-- Compare two brands (Crompton vs Bajaj)
+SELECT {b['entity_col']}, COUNT(DISTINCT respondent_id) aware,
+  ROUND(COUNT(DISTINCT respondent_id) * 100.0 / (SELECT COUNT(*) FROM {respondent_table}), 1) pct
+FROM {b['view']}
+WHERE {b['entity_col']} IN ('Crompton', 'Bajaj') AND {b['stage_col']} IN ('{b['tom_value']}', '{b['spont_value']}') AND {b['exclude_filter']}
+GROUP BY {b['entity_col']} ORDER BY aware DESC;
 """
