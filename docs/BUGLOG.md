@@ -296,8 +296,9 @@ Format per entry:
 | — | mq2a code 10 absent from codebook | Low | Won't Fix |
 | — | mq3a code 15 blank in datamap | Low | Won't Fix |
 | — | Groq free tier TPM limit can still be hit with large result summaries | Low | Monitored |
-| BUG-012 | Groq API rate limit (100k TPD) blocks testing after ~35 questions | High | Open |
-| BUG-013 | "breakdown by gender" routes to ownership instead of demographic | Medium | Open |
+| BUG-012 | Groq API rate limit (100k TPD) blocks testing after ~35 questions | High | Fixed |
+| BUG-013 | "breakdown by gender" routes to ownership instead of demographic | Medium | Partial |
+| BUG-014 | api_guide.py called st.set_page_config() causing page crash | High | Fixed |
 
 ---
 
@@ -324,16 +325,38 @@ Format per entry:
 ## BUG-013 — Skill Routing: "breakdown by gender" → ownership
 - **Date:** 2026-04-12
 - **Severity:** Medium (incorrect routing)
-- **Status:** Open
+- **Status:** Partially Fixed
 - **Symptom:**
   Question "Show me the breakdown by gender" incorrectly routes to "ownership" skill
   instead of "demographic" skill.
 - **Root Cause:**
-  Keyword conflict in SKILL_PRIORITY or KEYWORDS. Need to review why "gender" triggers 
-  ownership instead of demographic.
-- **Fix:** 
-  - Review KEYWORDS in `config/project_1.py` for overlapping keywords
-  - Adjust SKILL_PRIORITY order if needed
-  - Add more specific keywords for demographic to distinguish
+  `demographic` was early in `SKILL_PRIORITY` and its keyword list included `"compare"`,
+  causing false matches on comparison questions that also contain demographic terms.
+- **Fix (2026-04-14):**
+  - Moved `demographic` to the end of `SKILL_PRIORITY` (checked last, least ambiguous match wins)
+  - Removed `"compare"` from `KEYWORDS["demographic"]`
+  - "breakdown by gender" still occasionally misroutes if "breakdown" matches ownership keywords — tracked as residual
 - **Files Changed:** `config/project_1.py`
-- **Prevention:** Add more test cases to catch keyword conflicts
+- **Prevention:** Put the most specific, unambiguous skills first in SKILL_PRIORITY. Test keyword routing with phrase variations, not just exact phrases.
+
+---
+
+## BUG-014 — api_guide.py Calls st.set_page_config() (Page Crash)
+- **Date:** 2026-04-15
+- **Severity:** High (page throws StreamlitAPIException on load)
+- **Status:** Fixed
+- **Symptom:**
+  Opening the API Key Guide page crashed with:
+  ```
+  StreamlitAPIException: st.set_page_config() can only be called once per app,
+  and must be called as the first Streamlit command in your script.
+  ```
+- **Root Cause:**
+  `views/api_guide.py` had its own `st.set_page_config(page_title="API Key Guide", page_icon="🔑")` call.
+  In the `st.navigation()` multi-page model, only `app.py` may call `set_page_config()`.
+  Sub-pages served via `st.Page()` inherit the config from `app.py`.
+  Same root cause as **BUG-009**.
+- **Fix:**
+  Removed `st.set_page_config()` from `views/api_guide.py`.
+- **Files Changed:** `views/api_guide.py`
+- **Prevention:** Never call `st.set_page_config()` in any file under `views/`. Only `app.py` owns this call.

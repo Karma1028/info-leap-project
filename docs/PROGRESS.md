@@ -159,6 +159,51 @@ Adding a new domain concept = add one `skills/capabilities/new_concept.py` file.
 
 ---
 
+## Session: 2026-04-14 — Thinker v2 + Comparison + Benchmark Context
+
+### New Features
+- [x] **Thinker** (`skills/thinker.py`) — 3-stage intelligence layer:
+  - `classify_complexity()` — Python-only, 0 tokens. Classifies as `simple | contextual | complex | summary`
+  - `plan_query()` — LLM planner using Qwen3-32B (thinking model) with Llama-3.3-70B + Gemini fallback
+  - `execute_plan()` — runs sub-queries in dependency order, merges results in Python
+- [x] **Comparison engine** (`skills/capabilities/compare.py`) — pure Python, 0 tokens:
+  - Auto-detects leader/runner-up/delta in any result with an entity + numeric metric
+  - Injects comparison context into the enriched summary prompt
+- [x] **Benchmark context** (`skills/capabilities/insights.py`) — pure Python, 0 tokens:
+  - Domain benchmarks defined in `config/project_1.BENCHMARKS`
+  - Flags results above/below benchmark in the summary
+- [x] **Chart renderer** (`views/chart_renderer.py`) — chart_spec-driven + heuristic fallback:
+  - LLM can output `CHART: {"type": "bar", "x": "col", "y": "col"}` spec
+  - Falls back to heuristic detection if no spec given
+- [x] **Enriched summary** (`build_enriched_prompt`) — combines comparison + benchmark context before LLM summary call
+- [x] **Example queries** added to sidebar — brand comparison examples to help users discover complex query capability
+- [x] **API key entry in sidebar** — users can paste Groq key without touching .env
+
+### Model cascade for Thinker
+| Tier | Model | Role |
+|------|-------|------|
+| 1 | `qwen/qwen3-32b` | Reasoning/planning (Qwen3 thinking tags stripped) |
+| 2 | `llama-3.3-70b-versatile` | Fallback if Qwen3 unavailable |
+| 3 | `gemini-2.0-flash` | Last resort |
+
+### Routing fixes
+- Moved `demographic` to end of `SKILL_PRIORITY` (was causing false matches for "compare" questions)
+- Removed `compare` from demographic keywords
+
+---
+
+## Session: 2026-04-15 — API Guide + Navigation Fix
+
+### New Features
+- [x] `views/api_guide.py` — step-by-step guide for getting a Groq API key
+- [x] Added **Help > API Key Guide** section to `app.py` navigation
+
+### Bugs Fixed
+- **BUG-014**: `api_guide.py` called `st.set_page_config()` — only `app.py` may call this.
+  Removed from `api_guide.py`. (Same root cause as BUG-009.)
+
+---
+
 ## Backlog
 
 | Priority | Task | Notes |

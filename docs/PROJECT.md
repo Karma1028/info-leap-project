@@ -14,11 +14,11 @@ oxdata/
 ├── config/
 │   ├── __init__.py
 │   ├── registry.py          ← central project registry; set ACTIVE_PROJECT here
-│   └── project_1.py         ← Project 1 dimension mappings + column map
+│   └── project_1.py         ← Project 1 bindings: schema, keywords, skill meta, benchmarks
 │
 ├── data/
 │   ├── project_1/
-│   │   └── oxdata.db        ← star schema SQLite DB (built by ETL)
+│   │   └── oxdata.db        ← star schema SQLite DB (built by ETL; auto-downloaded by db_loader)
 │   ├── qualitative/
 │   │   └── processed/       ← 234 interview transcript .md files
 │   └── pageindex_trees/     ← pageindex retrieval trees (qualitative)
@@ -27,15 +27,41 @@ oxdata/
 │   ├── PROJECT.md           ← this file
 │   ├── SCHEMA.md            ← full DB schema + column descriptions
 │   ├── LOGIC.md             ← business logic, parsing rules, known quirks
-│   └── PROGRESS.md          ← what is done, what is next
+│   ├── SKILLS.md            ← Skill Foundry architecture & developer guide
+│   ├── CONTEXT.md           ← how schema context is passed to the API
+│   ├── BUGLOG.md            ← bug log with root causes and fixes
+│   ├── PROGRESS.md          ← session-by-session progress tracker
+│   └── TEST_REPORT.md       ← automated test results
 │
 ├── etl/
 │   ├── __init__.py
 │   └── load_data.py         ← config-driven ETL: Excel → star schema SQLite
 │
-├── app.py                   ← Streamlit chat interface
+├── skills/
+│   ├── __init__.py
+│   ├── base_rules.py        ← Layer 1: universal SQL rules (all projects, all skills)
+│   ├── foundry.py           ← assembler: route_query(), build_prompt_cache()
+│   ├── thinker.py           ← complexity classifier + LLM planner + multi-query executor
+│   └── capabilities/        ← Layer 2: domain logic modules (reusable across projects)
+│       ├── awareness.py
+│       ├── nps.py
+│       ├── ownership.py
+│       ├── purchase.py
+│       ├── room.py
+│       ├── demographic.py
+│       ├── compare.py       ← comparison engine (leader/runner-up/delta detection)
+│       └── insights.py      ← benchmark context builder
+│
+├── views/
+│   ├── chat.py              ← Chat page (NL → SQL → chart → insight)
+│   ├── schema.py            ← Schema Explorer (ER diagram, view/table docs)
+│   ├── api_guide.py         ← API Key Guide (how to get a Groq key)
+│   └── chart_renderer.py   ← chart spec parser + render_result()
+│
+├── app.py                   ← Streamlit entry point + st.navigation() hub
+├── db_loader.py             ← downloads DB from remote source on first run (Streamlit Cloud)
 ├── requirements.txt
-└── .env                     ← API keys (GEMINI_API_KEY, GROQ_API_KEY, etc.)
+└── .env                     ← API keys (GROQ_API_KEY, GEMINI_API_KEY)
 ```
 
 ---
@@ -80,16 +106,35 @@ etl/load_data.py  ←── config/project_1.py (dimension maps)
       │
       ▼
 data/project_1/oxdata.db  (star schema: dims + facts + views)
-      │
+      │           ↑ db_loader.py auto-downloads on Streamlit Cloud
       ▼
 app.py  ←── config/registry.py (which project is active)
       │
       ├── User types question in plain English
-      ├── Schema context injected into Gemini prompt
-      ├── Gemini generates SQL (queries the views)
-      ├── SQL executed on oxdata.db
-      └── Result shown as table + plain English answer
-             (SQL also shown for manual verification)
+      │
+      ├── skills/thinker.py — classify_complexity()
+      │     ├── "simple"    → single-skill flow (below)
+      │     ├── "contextual"→ single-skill flow (carry forward context)
+      │     ├── "complex"   → Thinker: plan → decompose → multi-query → merge
+      │     └── "summary"   → summarise prior conversation (no SQL)
+      │
+      ├── skills/foundry.py — route_query()  [0 API tokens — pure keyword match]
+      │     └── returns skill key (nps / awareness / ownership / purchase / room / demographic / general)
+      │
+      ├── PROMPT_CACHE[skill_key]  [pre-assembled at startup — 0 latency]
+      │     └── Layer 1 rules + skill schema slice (350–900 tokens)
+      │
+      ├── Groq llama-3.1-8b-instant → generates SQL
+      │     └── Gemini 2.0 Flash fallback if Groq rate-limited
+      │
+      ├── SQL executed on oxdata.db (SQLite, read-only)
+      │
+      ├── skills/capabilities/compare.py — comparison engine (leader/runner-up/delta)
+      ├── skills/capabilities/insights.py — benchmark context
+      │
+      ├── Groq llama-3.1-8b-instant → plain English summary (enriched)
+      │
+      └── views/chart_renderer.py — render_result() → chart + table
 ```
 
 ---
