@@ -141,29 +141,44 @@ AWARENESS — filter: {b['exclude_filter']}
 
 # ── prompt cache ───────────────────────────────────────────────────────────────
 
+_PROMPT_CACHE: dict[str, str] = {}
+_CACHE_BUILT = False
+
+
 def build_prompt_cache(project_config) -> dict[str, str]:
+    """Legacy - builds all prompts. Use get_skill_prompt() for lazy loading."""
+    global _PROMPT_CACHE, _CACHE_BUILT
+    if not _CACHE_BUILT:
+        supported = list(project_config.CAPABILITIES.keys()) + ["general"]
+        for cap_id in supported:
+            try:
+                _PROMPT_CACHE[cap_id] = assemble_prompt(cap_id, project_config)
+            except Exception as e:
+                print(f"[Foundry] WARNING: Could not assemble skill '{cap_id}': {e}")
+        _CACHE_BUILT = True
+    return _PROMPT_CACHE
+
+
+def get_skill_prompt(skill_key: str, project_config) -> str:
     """
-    Pre-assemble ALL skill prompts for a project at application startup.
-    This is pure Python string work — instantaneous, no API calls.
-    The cache is stored in session/module scope; each request looks up [skill_id].
-
-    Returns:
-        Dict mapping capability_id → assembled system prompt string.
-        Always includes "general" as a safe fallback.
-        Skips any capability that fails to assemble (logs a warning).
+    Lazy-load a skill prompt on-demand.
+    Only assembles the specific skill being used, not all of them.
     """
-    cache: dict[str, str] = {}
-
-    # Assemble all configured capabilities + general fallback
-    supported = list(project_config.CAPABILITIES.keys()) + ["general"]
-
-    for cap_id in supported:
-        try:
-            cache[cap_id] = assemble_prompt(cap_id, project_config)
-        except Exception as e:
-            print(f"[Foundry] WARNING: Could not assemble skill '{cap_id}': {e}")
-
-    return cache
+    global _PROMPT_CACHE, _CACHE_BUILT
+    if not _CACHE_BUILT:
+        _CACHE_BUILT = True
+        _PROMPT_CACHE["general"] = assemble_prompt("general", project_config)
+    
+    if skill_key in _PROMPT_CACHE:
+        return _PROMPT_CACHE[skill_key]
+    
+    try:
+        prompt = assemble_prompt(skill_key, project_config)
+        _PROMPT_CACHE[skill_key] = prompt
+        return prompt
+    except Exception as e:
+        print(f"[Foundry] Lazy load failed for '{skill_key}': {e}")
+        return _PROMPT_CACHE.get("general", "")
 
 
 # ── router ─────────────────────────────────────────────────────────────────────

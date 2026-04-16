@@ -349,12 +349,16 @@ KEYWORDS: dict[str, list[str]] = {
         "kitchen", "mixer", "juicer", "food processor", "microwave",
         "kettle", "sandwich", "water purifier", "induction stove", "air fryer",
         "otg", "coffee maker", "chimney", "dishwasher",
-        "own", "owned", "ownership",
+        "own", "owned", "ownership", "penetration", "saturation",
+        "emerging", "tier", "core", "premium", "over-index", "over index",
+        "low", "medium", "high", "periphery", "secondary",
     ],
     "awareness": [
         "tom", "top of mind", "spontaneous", "spont", "aided", "recall",
         "awareness", "brand funnel", "funnel", "mention", "remember",
-        "heard of", "first brand", "think of",
+        "heard of", "first brand", "think of", "conversion", "trial",
+        "currently using", "consideration", "preference", "shortlist",
+        "ever used", "market share", "share",
     ],
     "demographic": [
         "respondent", "how many", "city", "zone", "gender", "male", "female",
@@ -366,6 +370,7 @@ KEYWORDS: dict[str, list[str]] = {
         "count", "distribution", "breakdown", "split", "detail", "who",
         # "compare", "comparison",  # Removed - too generic, causes wrong routing "by gender", "by age", "by city", "by zone",
         "demographics", "profile", "split by", "breakdown by", "segment",
+        "cohort", "age group", "25-35", "36-50",
     ],
 }
 

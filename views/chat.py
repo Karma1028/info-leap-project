@@ -27,7 +27,7 @@ import sys
 sys.path.insert(0, str(BASE_DIR))
 
 from config import project_1 as project
-from skills.foundry import route_query, build_prompt_cache
+from skills.foundry import route_query, build_prompt_cache, get_skill_prompt
 from skills.thinker import (
     classify_complexity, plan_query, execute_plan,
     build_session_context, QueryPlan,
@@ -51,10 +51,38 @@ SQL_MODEL     = "llama-3.1-8b-instant"        # Fast, cheap — good enough for 
 SUMMARY_MODEL = "llama-3.1-8b-instant"        # Fast, cheap — summary with pre-computed context
 THINKER_MODEL = "qwen/qwen3-32b"              # Reasoning model for complex query planning
 FALLBACK_MODEL = "llama-3.3-70b-versatile"    # Fallback if Qwen3 fails
-CONTEXT_TURNS = 4
+CONTEXT_TURNS = 2  # Keep last 2 turns (4 messages) for context
 
-# Pre-assemble all skill prompts once at startup (pure Python, 0 tokens)
-PROMPT_CACHE: dict[str, str] = build_prompt_cache(project)
+# Query cache for detecting redundant queries
+class QueryCache:
+    def __init__(self, max_entries=20):
+        self.cache = []
+        self.max_entries = max_entries
+    
+    def _normalize(self, sql):
+        return re.sub(r'\s+', ' ', sql.lower().strip())
+    
+    def get(self, sql, skill):
+        normalized = self._normalize(sql)
+        for entry in self.cache[-5:]:
+            if entry['skill'] == skill and entry['normalized'] == normalized:
+                return entry['result']
+        return None
+    
+    def add(self, sql, skill, result):
+        self.cache.append({
+            'normalized': self._normalize(sql),
+            'skill': skill,
+            'result': result,
+            'timestamp': pd.Timestamp.now()
+        })
+        if len(self.cache) > self.max_entries:
+            self.cache.pop(0)
+
+QUERY_CACHE = QueryCache()
+
+# Lazy-load prompts on-demand (not all at startup)
+PROMPT_CACHE: dict[str, str] = {}
 SKILL_META:   dict           = project.SKILL_META
 BENCHMARKS:   dict           = project.BENCHMARKS
 
@@ -76,10 +104,10 @@ def _extract_sql(response: str) -> str:
 
 
 def get_sql(question: str, skill_key: str, history: list[dict]) -> str:
-    """Generate SQL using the cached skill prompt + conversation context.
+    """Generate SQL using the lazy-loaded skill prompt + conversation context.
     Returns raw LLM output (may contain CHART: spec line).
     Falls back to Gemini if Groq fails."""
-    system_prompt = PROMPT_CACHE.get(skill_key, PROMPT_CACHE["general"])
+    system_prompt = get_skill_prompt(skill_key, project)
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -134,6 +162,96 @@ def run_sql(sql: str) -> tuple[pd.DataFrame | None, str | None]:
         return df, None
     except Exception as e:
         return None, str(e)
+
+
+def get_sql_correction(original_sql: str, error_msg: str, skill_key: str) -> str | None:
+    """Send failed SQL + error to LLM for auto-correction."""
+    correction_prompt = f"""You are a SQL corrector. Given a failed SQL query and its error,
+correct the query so it executes successfully.
+
+SCHEMA CONTEXT:
+- Use tables: v_respondents, v_brand_awareness, v_brand_nps, 
+  v_kitchen_ownership, v_recent_purchase, v_room_appliances
+- Common columns: respondent_id, brand_name, appliance_name, city_name, 
+  zone_name, gender, age_band, nps_score, stage
+
+ERROR: {error_msg}
+
+ORIGINAL SQL:
+{original_sql}
+
+Return ONLY the corrected SQL query. No explanation. No markdown."""
+
+    try:
+        system_prompt = get_skill_prompt(skill_key, project)
+        r = groq_client.chat.completions.create(
+            model=SQL_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt[:2000]},
+                {"role": "user", "content": correction_prompt}
+            ],
+            temperature=0.0,
+            max_tokens=512,
+        )
+        raw = r.choices[0].message.content or ""
+        return _extract_sql(raw)
+    except Exception as e:
+        print(f"[SQL Correction] LLM failed: {e}")
+        return None
+
+
+def run_sql_with_retry(
+    sql: str, 
+    skill_key: str = "general",
+    max_retries: int = 3
+) -> tuple[pd.DataFrame | None, str | None, list[dict]]:
+    """
+    Execute SQL with automatic error recovery.
+    
+    Returns: (df, error_message, retry_log)
+    - df: DataFrame if successful, None if failed
+    - error_message: None if successful, error string if all retries failed
+    - retry_log: list of {attempt, sql, error, corrected_sql} for debugging
+    """
+    retry_log = []
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            con = sqlite3.connect(str(DB_PATH))
+            df = pd.read_sql_query(sql, con)
+            con.close()
+            
+            if attempt > 0:
+                print(f"[SQL Retry] Success on attempt {attempt + 1}")
+            
+            return df, None, retry_log
+            
+        except Exception as e:
+            last_error = str(e)
+            retry_log.append({
+                "attempt": attempt + 1,
+                "sql": sql,
+                "error": last_error,
+                "corrected_sql": None
+            })
+            
+            print(f"[SQL Retry] Attempt {attempt + 1}/{max_retries} failed: {last_error}")
+            
+            if "no such table" in last_error.lower() or "no columns" in last_error.lower():
+                break
+            
+            if attempt < max_retries - 1:
+                corrected = get_sql_correction(sql, last_error, skill_key)
+                if corrected and corrected != sql:
+                    sql = corrected
+                    retry_log[-1]["corrected_sql"] = corrected
+                    print(f"[SQL Retry] Got corrected SQL: {sql[:100]}...")
+                else:
+                    print(f"[SQL Retry] No correction available, stopping")
+                    break
+    
+    return None, last_error, retry_log
 
 
 def _llm_call(system_prompt: str, user_prompt: str) -> str:
@@ -243,6 +361,15 @@ def _handle_simple_query(question: str, skill_key: str, history: list[dict]) -> 
     meta = SKILL_META.get(skill_key, {"icon": "🔍", "label": skill_key})
     st.caption(f"{meta['icon']} Skill: **{meta['label']}**")
 
+    # Check query cache before generating SQL
+    cached_sql = None
+    for msg in history[-4:]:
+        if msg.get("sql"):
+            cached_sql = QUERY_CACHE.get(msg["sql"], skill_key)
+            if cached_sql is not None:
+                st.caption("♻️ Using cached result")
+                break
+
     with st.spinner("Generating SQL..."):
         try:
             raw_output = get_sql(question, skill_key, history)
@@ -262,8 +389,22 @@ def _handle_simple_query(question: str, skill_key: str, history: list[dict]) -> 
     with st.expander("Generated SQL", expanded=True):
         st.code(sql, language="sql")
 
+    if not sql:
+        return {
+            "role": "assistant", "content": "Failed to generate SQL",
+            "sql": None, "df": None, "error": "No SQL generated",
+            "question": question, "skill": skill_key,
+        }
+
     with st.spinner("Running query..."):
-        df, error = run_sql(sql)
+        df, error, retry_log = run_sql_with_retry(sql, skill_key)
+
+    if retry_log and len(retry_log) > 1:
+        with st.expander(f"🔄 SQL Retry Log ({len(retry_log)} attempts)", expanded=False):
+            for log in retry_log:
+                st.markdown(f"**Attempt {log['attempt']}:** {log['error']}")
+                if log['corrected_sql']:
+                    st.code(log['corrected_sql'], language="sql")
 
     # Auto-retry with general on SQL error
     if error and skill_key != "general":
@@ -271,7 +412,7 @@ def _handle_simple_query(question: str, skill_key: str, history: list[dict]) -> 
         try:
             raw2 = get_sql(question, "general", history)
             sql2, chart_spec2 = _process_sql_output(raw2)
-            df2, error2 = run_sql(sql2)
+            df2, error2, _ = run_sql_with_retry(sql2, "general")
             if not error2 and df2 is not None:
                 sql, df, error, skill_key, chart_spec = sql2, df2, None, "general", chart_spec2
                 with st.expander("Retry SQL (General)", expanded=True):
@@ -286,6 +427,10 @@ def _handle_simple_query(question: str, skill_key: str, history: list[dict]) -> 
             "sql": sql, "df": None, "error": error,
             "question": question, "skill": skill_key,
         }
+
+    # Add to query cache
+    if sql and df is not None:
+        QUERY_CACHE.add(sql, skill_key, df)
 
     # Render chart using chart_spec
     render_result(df, question, chart_spec=chart_spec)

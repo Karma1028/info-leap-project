@@ -78,6 +78,24 @@ COLORS = {
 }
 
 
+def extract_key_metrics(df: pd.DataFrame) -> list[tuple[str, str]]:
+    """Extract top 3-5 key metrics from the DataFrame."""
+    mcols = metric_cols(df)[:5]
+    results = []
+    for c in mcols[:5]:
+        if len(df) == 1:
+            v = df.iloc[0][c]
+        else:
+            v = df[c].sum() if df[c].dtype in (int, float) else df[c].iloc[-1]
+        if isinstance(v, float):
+            results.append((c, f"{v:.1f}"))
+        elif isinstance(v, int):
+            results.append((c, f"{v:,}"))
+        else:
+            results.append((c, str(v)))
+    return results[:5]
+
+
 def has_col(df: pd.DataFrame, *frags: str) -> str | None:
     """Return the first column whose name contains any of the given fragments."""
     for col in df.columns:
@@ -499,6 +517,17 @@ def render_result(
     if df is None or df.empty:
         st.info("Query returned no rows.")
         return
+
+    # Render key metrics panel (if multi-row data with metrics)
+    mcols = metric_cols(df)
+    if len(df) > 1 and mcols:
+        metrics = extract_key_metrics(df)
+        if len(metrics) >= 2:
+            cols = st.columns(min(len(metrics), 4))
+            for i, (label, value) in enumerate(metrics[:4]):
+                with cols[i]:
+                    st.metric(_col_label(label), value)
+            st.divider()
 
     # Determine chart type
     if chart_spec and chart_spec.get("type", "auto") != "auto":
